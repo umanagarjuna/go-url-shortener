@@ -1,0 +1,25 @@
+server:
+  httpPort: ":8080"
+  grpcPort: ":50051"
+
+database:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  password: "admin"
+  dbName: "url_shortener"
+  sslMode: "disable"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+
+kafka:
+  brokers:
+    - "localhost:9092"
+
+service:
+  baseURL: "http://localhost:8080"
+  machineID: 1

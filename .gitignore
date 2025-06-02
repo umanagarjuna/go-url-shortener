@@ -30,3 +30,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+.idea/vcs.xml
+.idea/modules.xml
+.idea/misc.xml
+.idea/go-url-shortener.iml
+.idea/dataSources.xml

@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package url.v1;
+
+option go_package = "url-shortener/api/proto/url/v1;urlpb";
+
+service URLService {
+  rpc CreateURL(CreateURLRequest) returns (URLResponse);
+  rpc GetURL(GetURLRequest) returns (URLResponse);
+  rpc ValidateURL(ValidateURLRequest) returns (ValidationResponse);
+}
+
+message CreateURLRequest {
+  string url = 1;
+  optional int64 user_id = 2;
+  optional int64 expires_in = 3; // seconds
+  map<string, string> metadata = 4;
+}
+
+message GetURLRequest {
+  string short_code = 1;
+}
+
+message URLResponse {
+  string short_code = 1;
+  string short_url = 2;
+  string original_url = 3;
+  int64 created_at = 4;
+  optional int64 expires_at = 5;
+  int64 click_count = 6;
+}
+
+message ValidateURLRequest {
+  string url = 1;
+}
+
+message ValidationResponse {
+  bool is_valid = 1;
+  bool is_safe = 2;
+  optional string reason = 3;
+}
