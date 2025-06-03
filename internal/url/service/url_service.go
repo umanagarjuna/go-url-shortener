@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/umanagarjuna/go-url-shortener/internal/url/metrics"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ type URLService struct {
 	validator validator.URLValidator
 	publisher *events.EventPublisher
 	logger    *zap.Logger
+	metrics   metrics.Metrics
 	baseURL   string
 }
 
@@ -31,12 +33,13 @@ type Config struct {
 }
 
 func NewURLService(
-	repo repository.Repository, // FIXED: Use interface
+	repo repository.Repository,
 	cache *cache.RedisCache,
 	generator shortcode.Generator,
 	validator validator.URLValidator,
 	publisher *events.EventPublisher,
 	logger *zap.Logger,
+	metrics metrics.Metrics, // NEW
 	config Config,
 ) *URLService {
 	return &URLService{
@@ -46,17 +49,34 @@ func NewURLService(
 		validator: validator,
 		publisher: publisher,
 		logger:    logger,
+		metrics:   metrics, // NEW
 		baseURL:   config.BaseURL,
 	}
 }
 
 func (s *URLService) CreateURL(ctx context.Context, req *domain.CreateURLRequest) (*domain.URLResponse, error) {
-	// 1. Validate URL
+	start := time.Now()
+	defer func() {
+		s.metrics.RecordDuration("url_create_duration", time.Since(start))
+	}()
+
+	s.metrics.IncrementCounter("url_create_requests_total")
+	// 1. Check response cache first
+	cacheKey := cache.GenerateResponseCacheKey(req.URL, req.UserID)
+	if cachedResponse, err := s.cache.GetResponse(ctx, cacheKey); err == nil && cachedResponse != nil {
+		s.logger.Debug("Returning cached response",
+			zap.String("url", req.URL),
+			zap.Int64("user_id", req.UserID),
+			zap.String("short_code", cachedResponse.ShortCode))
+		return cachedResponse, nil
+	}
+
+	// 2. Validate URL
 	if err := s.validator.Validate(req.URL); err != nil {
 		return nil, fmt.Errorf("URL validation failed: %w", err)
 	}
 
-	// 2. Check if URL is safe
+	// 3. Check if URL is safe
 	safe, err := s.validator.IsSafe(req.URL)
 	if err != nil {
 		s.logger.Error("Failed to check URL safety",
@@ -66,14 +86,14 @@ func (s *URLService) CreateURL(ctx context.Context, req *domain.CreateURLRequest
 		return nil, fmt.Errorf("URL is not safe")
 	}
 
-	// 3. CRITICAL FIX: Check for existing URL for this specific user
+	// 4. Check for existing URL with detailed logging
 	s.logger.Info("Checking for existing URL for user",
 		zap.String("url", req.URL),
 		zap.Int64("user_id", req.UserID))
 
 	existingURL, err := s.repo.GetByOriginalURLAndUser(ctx, req.URL, req.UserID)
 	if err != nil {
-		// CHANGE: Treat error as serious - don't proceed if we can't check
+		s.metrics.IncrementCounter("url_create_errors_total")
 		s.logger.Error("Failed to check existing URL",
 			zap.Error(err),
 			zap.String("url", req.URL),
@@ -81,22 +101,40 @@ func (s *URLService) CreateURL(ctx context.Context, req *domain.CreateURLRequest
 		return nil, fmt.Errorf("cannot verify existing URLs: %w", err)
 	}
 
+	var response *domain.URLResponse
+
 	if existingURL != nil {
-		// CRITICAL: Found existing URL - return it instead of creating new one
+		s.metrics.IncrementCounter("url_duplicates_prevented_total")
 		s.logger.Info("Found existing URL for user - returning same short code",
 			zap.String("original_url", req.URL),
 			zap.String("existing_short_code", existingURL.ShortCode),
+			zap.Int64("user_id", req.UserID),
+			zap.Int64("existing_id", existingURL.ID),
+			zap.Time("created_at", existingURL.CreatedAt),
+			zap.Any("expires_at", existingURL.ExpiresAt))
+
+		response = s.buildURLResponse(existingURL)
+	} else {
+		// 5. No existing URL - create new one
+		s.metrics.IncrementCounter("url_create_new_total")
+		s.logger.Info("No existing URL found for user - creating new one",
+			zap.String("url", req.URL),
 			zap.Int64("user_id", req.UserID))
 
-		return s.buildURLResponse(existingURL), nil
+		response, err = s.createNewURLWithRetry(ctx, req)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// 4. No existing URL - create new one
-	s.logger.Info("No existing URL found for user - creating new one",
-		zap.String("url", req.URL),
-		zap.Int64("user_id", req.UserID))
+	// 6. Cache the response for future requests
+	if err := s.cache.SetResponse(ctx, cacheKey, response, 5*time.Minute); err != nil {
+		s.logger.Warn("Failed to cache response",
+			zap.Error(err),
+			zap.String("cache_key", cacheKey))
+	}
 
-	return s.createNewURLWithRetry(ctx, req)
+	return response, nil
 }
 
 func (s *URLService) createNewURLWithRetry(ctx context.Context, req *domain.CreateURLRequest) (*domain.URLResponse, error) {

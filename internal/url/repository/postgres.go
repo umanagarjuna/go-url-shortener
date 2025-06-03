@@ -45,32 +45,61 @@ func (r *PostgresRepository) Create(ctx context.Context, url *domain.URL) error 
 	return nil
 }
 
-// FIXED: Add the missing GetByOriginalURLAndUser method
-func (r *PostgresRepository) GetByOriginalURLAndUser(ctx context.Context, originalURL string, userID int64) (*domain.URL, error) {
-	var url domain.URL
+func (r *PostgresRepository) GetByOriginalURLAndUser(ctx context.Context,
+	originalURL string, userID int64) (*domain.URL, error) {
 
+	var url domain.URL
 	query := `
-		SELECT id, short_code, original_url, user_id, created_at, 
-			   expires_at, click_count, is_active, metadata
-		FROM urls
-		WHERE original_url = $1 AND user_id = $2 AND is_active = true
-		ORDER BY created_at DESC
-		LIMIT 1`
+        SELECT id, short_code, original_url, user_id, created_at, 
+               expires_at, click_count, is_active, metadata, updated_at
+        FROM urls
+        WHERE original_url = $1 
+          AND user_id = $2 
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1`
+
+	// Remove all these debug logs for production:
+	// log.Printf("DEBUG: Executing query for originalURL=%s, userID=%d", originalURL, userID)
+	// log.Printf("DEBUG: Query = %s", query)
 
 	err := r.db.GetContext(ctx, &url, query, originalURL, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // URL not found for this user
+			// log.Printf("DEBUG: No rows found for originalURL=%s, userID=%d", originalURL, userID)
+			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get URL by original URL and user: %w", err)
+		// log.Printf("DEBUG: Database error: %v", err)
+		return nil, fmt.Errorf("failed to get URL: %w", err)
 	}
 
-	// Check if URL has expired - if expired, return nil (create new one)
+	// log.Printf("DEBUG: Found existing URL - ID=%d, ShortCode=%s, ExpiresAt=%v", url.ID, url.ShortCode, url.ExpiresAt)
+
+	// Check expiration in application and soft delete if expired
 	if url.ExpiresAt != nil && url.ExpiresAt.Before(time.Now()) {
-		return nil, nil // Expired, should create new record
+		// log.Printf("DEBUG: URL %s is expired, soft deleting", url.ShortCode)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			r.SoftDelete(ctx, url.ShortCode)
+			// Remove: log.Printf("DEBUG: Failed to soft delete: %v", err)
+			// Remove: log.Printf("DEBUG: Successfully soft deleted %s", url.ShortCode)
+		}()
+		return nil, nil
 	}
 
+	// log.Printf("DEBUG: Returning existing valid URL: %s", url.ShortCode)
 	return &url, nil
+}
+
+func (r *PostgresRepository) SoftDelete(ctx context.Context, shortCode string) error {
+	query := `
+        UPDATE urls 
+        SET deleted_at = NOW(), updated_at = NOW()
+        WHERE short_code = $1 AND deleted_at IS NULL`
+
+	_, err := r.db.ExecContext(ctx, query, shortCode)
+	return err
 }
 
 // FIXED: Remove the old GetByOriginalURL method or keep it if you need it for other purposes

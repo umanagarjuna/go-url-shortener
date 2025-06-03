@@ -20,6 +20,7 @@ import (
 	"github.com/umanagarjuna/go-url-shortener/internal/url/config"
 	"github.com/umanagarjuna/go-url-shortener/internal/url/events"
 	"github.com/umanagarjuna/go-url-shortener/internal/url/handler"
+	"github.com/umanagarjuna/go-url-shortener/internal/url/metrics"
 	"github.com/umanagarjuna/go-url-shortener/internal/url/repository"
 	"github.com/umanagarjuna/go-url-shortener/internal/url/service"
 	"github.com/umanagarjuna/go-url-shortener/pkg/shortcode"
@@ -64,6 +65,9 @@ func main() {
 	generator := shortcode.NewBase62GeneratorWithLength(10)
 	urlValidator := validator.NewDefaultValidator()
 
+	// Initialize metrics
+	metricsCollector := metrics.NewInMemoryMetrics()
+
 	// Initialize service
 	urlService := service.NewURLService(
 		repo,
@@ -72,6 +76,7 @@ func main() {
 		urlValidator,
 		publisher,
 		logger,
+		metricsCollector, // NEW
 		service.Config{
 			BaseURL: cfg.Service.BaseURL,
 		},

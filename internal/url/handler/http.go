@@ -31,6 +31,9 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		api.GET("/users/:userId/urls", h.GetUserURLs)
 	}
 
+	// Metrics endpoint (NEW)
+	router.GET("/metrics", h.GetMetrics)
+
 	// Redirect endpoint
 	router.GET("/:shortCode", h.RedirectURL)
 }
@@ -60,6 +63,14 @@ func (h *HTTPHandler) CreateURL(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, resp)
+}
+
+func (h *HTTPHandler) GetMetrics(c *gin.Context) {
+	// This would work if you pass metrics to HTTPHandler
+	// For now, return a simple response
+	c.JSON(http.StatusOK, gin.H{
+		"status": "metrics endpoint - implement based on your metrics collector",
+	})
 }
 
 func (h *HTTPHandler) GetURL(c *gin.Context) {
@@ -142,7 +153,7 @@ func (h *HTTPHandler) DeleteURL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "short_code is required"})
 		return
 	}
-	
+
 	err := h.service.DeleteURL(c.Request.Context(), shortCode)
 	if err != nil {
 		h.logger.Error("Failed to delete URL",

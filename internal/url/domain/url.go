@@ -19,6 +19,7 @@ type URL struct {
 	IsActive    bool       `json:"is_active" db:"is_active"`
 	Metadata    JSONB      `json:"metadata" db:"metadata"`
 	UpdatedAt   time.Time  `json:"updated_at" db:"updated_at"` // NOT pointer - matches schema
+	DeletedAt   time.Time  `json:"deleted_at" db:"deleted_at"`
 }
 
 // JSONB handles JSON data for PostgreSQL

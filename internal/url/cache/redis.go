@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -12,8 +14,10 @@ import (
 )
 
 const (
-	urlPrefix  = "url:"
-	defaultTTL = 24 * time.Hour
+	urlPrefix      = "url:"
+	responsePrefix = "response:"
+	defaultTTL     = 24 * time.Hour
+	responseTTL    = 5 * time.Minute // Shorter TTL for responses
 )
 
 type RedisCache struct {
@@ -101,4 +105,62 @@ func (c *RedisCache) Invalidate(ctx context.Context, pattern string) error {
 	}
 
 	return nil
+}
+
+// Add these methods to RedisCache
+func (c *RedisCache) GetResponse(ctx context.Context, key string) (*domain.URLResponse, error) {
+	cacheKey := fmt.Sprintf("%s%s", responsePrefix, key)
+
+	val, err := c.client.Get(ctx, cacheKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("response cache get error: %w", err)
+	}
+
+	var response domain.URLResponse
+	if err := json.Unmarshal([]byte(val), &response); err != nil {
+		return nil, fmt.Errorf("response cache unmarshal error: %w", err)
+	}
+
+	return &response, nil
+}
+
+func (c *RedisCache) SetResponse(ctx context.Context, key string, response *domain.URLResponse, ttl time.Duration) error {
+	cacheKey := fmt.Sprintf("%s%s", responsePrefix, key)
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		return fmt.Errorf("response cache marshal error: %w", err)
+	}
+
+	if ttl <= 0 {
+		ttl = responseTTL
+	}
+
+	err = c.client.Set(ctx, cacheKey, data, ttl).Err()
+	if err != nil {
+		return fmt.Errorf("response cache set error: %w", err)
+	}
+
+	return nil
+}
+
+func (c *RedisCache) DeleteResponse(ctx context.Context, key string) error {
+	cacheKey := fmt.Sprintf("%s%s", responsePrefix, key)
+
+	err := c.client.Del(ctx, cacheKey).Err()
+	if err != nil {
+		return fmt.Errorf("response cache delete error: %w", err)
+	}
+
+	return nil
+}
+
+// Helper function to generate cache keys
+func GenerateResponseCacheKey(originalURL string, userID int64) string {
+	data := fmt.Sprintf("%s:%d", originalURL, userID)
+	hash := md5.Sum([]byte(data))
+	return hex.EncodeToString(hash[:])
 }
