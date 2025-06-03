@@ -164,3 +164,33 @@ func GenerateResponseCacheKey(originalURL string, userID int64) string {
 	hash := md5.Sum([]byte(data))
 	return hex.EncodeToString(hash[:])
 }
+
+func (c *RedisCache) ClearResponseCache(ctx context.Context) error {
+	// Get all response cache keys
+	pattern := "response:*"
+	keys, err := c.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get response cache keys: %w", err)
+	}
+
+	if len(keys) == 0 {
+		return nil // No keys to delete
+	}
+
+	// Delete all response cache keys
+	err = c.client.Del(ctx, keys...).Err()
+	if err != nil {
+		return fmt.Errorf("failed to delete response cache keys: %w", err)
+	}
+
+	return nil
+}
+
+func (c *RedisCache) ClearAllCache(ctx context.Context) error {
+	// Clear entire Redis database (use with caution!)
+	err := c.client.FlushDB(ctx).Err()
+	if err != nil {
+		return fmt.Errorf("failed to flush Redis database: %w", err)
+	}
+	return nil
+}

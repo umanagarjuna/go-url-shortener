@@ -36,6 +36,12 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 
 	// Redirect endpoint
 	router.GET("/:shortCode", h.RedirectURL)
+
+	admin := router.Group("/admin")
+	{
+		admin.DELETE("/cache/response", h.ClearResponseCache)
+		admin.DELETE("/cache/all", h.ClearAllCache)
+	}
 }
 
 func (h *HTTPHandler) CreateURL(c *gin.Context) {
@@ -166,7 +172,7 @@ func (h *HTTPHandler) DeleteURL(c *gin.Context) {
 }
 
 func (h *HTTPHandler) GetUserURLs(c *gin.Context) {
-	userIDStr := c.Param("userID")
+	userIDStr := c.Param("userId")
 	userID, err := strconv.ParseInt(userIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
@@ -200,5 +206,39 @@ func (h *HTTPHandler) GetUserURLs(c *gin.Context) {
 		"limit":  limit,
 		"offset": offset,
 		"count":  len(urls),
+	})
+}
+
+// Add these methods to your existing HTTPHandler struct
+
+func (h *HTTPHandler) ClearResponseCache(c *gin.Context) {
+	if err := h.service.ClearResponseCache(c.Request.Context()); err != nil {
+		h.logger.Error("Failed to clear response cache", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to clear response cache",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	h.logger.Info("Response cache cleared successfully")
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Response cache cleared successfully",
+	})
+}
+
+func (h *HTTPHandler) ClearAllCache(c *gin.Context) {
+	if err := h.service.ClearAllCache(c.Request.Context()); err != nil {
+		h.logger.Error("Failed to clear all cache", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to clear all cache",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	h.logger.Info("All cache cleared successfully")
+	c.JSON(http.StatusOK, gin.H{
+		"message": "All cache cleared successfully",
 	})
 }

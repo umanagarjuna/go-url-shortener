@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"github.com/umanagarjuna/go-url-shortener/internal/url/metrics"
 	"strings"
@@ -383,15 +385,40 @@ func (s *URLService) RedirectURL(ctx context.Context, shortCode string,
 
 // FIXED: Remove userID parameter to match interface
 func (s *URLService) DeleteURL(ctx context.Context, shortCode string) error {
+	// Get URL first
+	url, err := s.repo.GetByShortCode(ctx, shortCode)
+	if err != nil {
+		return err
+	}
+	if url == nil {
+		return fmt.Errorf("URL not found")
+	}
+
 	// Delete from database
 	if err := s.repo.Delete(ctx, shortCode); err != nil {
 		return err
 	}
 
-	// Remove from cache
+	// Remove URL cache
 	if err := s.cache.Delete(ctx, shortCode); err != nil {
-		s.logger.Warn("Failed to delete from cache",
-			zap.Error(err), zap.String("short_code", shortCode))
+		s.logger.Warn("Failed to delete URL from cache", zap.Error(err))
+	}
+
+	// ACTUALLY DELETE response cache (not just log)
+	data := fmt.Sprintf("%s:%d", url.OriginalURL, url.UserID)
+	hash := md5.Sum([]byte(data))
+	cacheKey := hex.EncodeToString(hash[:])
+
+	// Delete the response cache key directly
+	responseCacheKey := fmt.Sprintf("response:%s", cacheKey)
+	if err := s.cache.Delete(ctx, responseCacheKey); err != nil {
+		s.logger.Warn("Failed to delete response cache",
+			zap.Error(err),
+			zap.String("response_cache_key", responseCacheKey))
+	} else {
+		s.logger.Info("Successfully invalidated response cache",
+			zap.String("short_code", shortCode),
+			zap.String("response_cache_key", responseCacheKey))
 	}
 
 	return nil
@@ -505,4 +532,28 @@ func (s *URLService) GetURLAndIncrementClick(ctx context.Context, shortCode, use
 	}()
 
 	return url, nil
+}
+
+// Add these methods to your URLService struct
+
+func (s *URLService) ClearResponseCache(ctx context.Context) error {
+	// Delegate to cache layer
+	if err := s.cache.ClearResponseCache(ctx); err != nil {
+		s.logger.Error("Failed to clear response cache", zap.Error(err))
+		return fmt.Errorf("failed to clear response cache: %w", err)
+	}
+
+	s.logger.Info("Response cache cleared successfully")
+	return nil
+}
+
+func (s *URLService) ClearAllCache(ctx context.Context) error {
+	// Delegate to cache layer
+	if err := s.cache.ClearAllCache(ctx); err != nil {
+		s.logger.Error("Failed to clear all cache", zap.Error(err))
+		return fmt.Errorf("failed to clear all cache: %w", err)
+	}
+
+	s.logger.Info("All cache cleared successfully")
+	return nil
 }

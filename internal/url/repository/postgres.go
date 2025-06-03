@@ -136,7 +136,7 @@ func (r *PostgresRepository) GetByShortCode(ctx context.Context, shortCode strin
         SELECT id, short_code, original_url, user_id, created_at, 
                expires_at, click_count, is_active, metadata
         FROM urls
-        WHERE short_code = $1 AND is_active = true`
+        WHERE short_code = $1 AND is_active = true AND deleted_at IS NULL`
 
 	err := r.db.GetContext(ctx, &url, query, shortCode)
 	if err != nil {
@@ -221,8 +221,10 @@ func (r *PostgresRepository) Update(ctx context.Context, url *domain.URL) error 
 func (r *PostgresRepository) Delete(ctx context.Context, shortCode string) error {
 	query := `
         UPDATE urls 
-        SET is_active = false 
-        WHERE short_code = $1`
+        SET is_active = false, 
+            deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE short_code = $1 AND deleted_at IS NULL`
 
 	result, err := r.db.ExecContext(ctx, query, shortCode)
 	if err != nil {
@@ -235,7 +237,7 @@ func (r *PostgresRepository) Delete(ctx context.Context, shortCode string) error
 	}
 
 	if rows == 0 {
-		return fmt.Errorf("URL not found")
+		return fmt.Errorf("URL not found or already deleted")
 	}
 
 	return nil

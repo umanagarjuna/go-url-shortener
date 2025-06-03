@@ -17,4 +17,7 @@ type Cache interface {
 	GetResponse(ctx context.Context, key string) (*domain.URLResponse, error)
 	SetResponse(ctx context.Context, key string, response *domain.URLResponse, ttl time.Duration) error
 	DeleteResponse(ctx context.Context, key string) error
+	// Cache management (NEW)
+	ClearResponseCache(ctx context.Context) error
+	ClearAllCache(ctx context.Context) error
 }
