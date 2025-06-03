@@ -2,106 +2,132 @@ package shortcode
 
 import (
 	"crypto/rand"
-	"encoding/base64"
-	"fmt"
-	"sync"
-	"time"
+	"math/big"
+	"strings"
 )
 
-const (
-	DefaultLength = 7
-	charset       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-)
-
-// Generator generates unique short codes
 type Generator interface {
 	Generate() (string, error)
 	GenerateWithLength(length int) (string, error)
 }
 
-// RandomGenerator generates random short codes
-type RandomGenerator struct{}
-
-func NewRandomGenerator() Generator {
-	return &RandomGenerator{}
+type Base62Generator struct {
+	length  int
+	charset string
 }
 
-func (g *RandomGenerator) Generate() (string, error) {
-	return g.GenerateWithLength(DefaultLength)
-}
+const (
+	// Base62 charset (0-9, A-Z, a-z)
+	DefaultCharset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	DefaultLength  = 8 // Increased from 6 to 8 for more unique combinations
+)
 
-func (g *RandomGenerator) GenerateWithLength(length int) (string, error) {
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+func NewBase62Generator() *Base62Generator {
+	return &Base62Generator{
+		length:  DefaultLength,
+		charset: DefaultCharset,
 	}
+}
+
+func NewBase62GeneratorWithLength(length int) *Base62Generator {
+	if length < 4 {
+		length = 4 // Minimum length for security
+	}
+	if length > 12 {
+		length = 12 // Maximum length for practicality
+	}
+
+	return &Base62Generator{
+		length:  length,
+		charset: DefaultCharset,
+	}
+}
+
+func (g *Base62Generator) Generate() (string, error) {
+	return g.GenerateWithLength(g.length)
+}
+
+func (g *Base62Generator) GenerateWithLength(length int) (string, error) {
+	if length <= 0 {
+		length = g.length
+	}
+
+	var result strings.Builder
+	result.Grow(length)
+
+	charsetLength := big.NewInt(int64(len(g.charset)))
 
 	for i := 0; i < length; i++ {
-		b[i] = charset[b[i]%byte(len(charset))]
-	}
-
-	return string(b), nil
-}
-
-// SnowflakeGenerator implements Twitter Snowflake-like ID generation
-type SnowflakeGenerator struct {
-	mu        sync.Mutex
-	epoch     int64
-	machineID int64
-	sequence  int64
-	lastTime  int64
-}
-
-func NewSnowflakeGenerator(machineID int64) Generator {
-	return &SnowflakeGenerator{
-		epoch:     1640995200000, // Jan 1, 2022
-		machineID: machineID,
-	}
-}
-
-func (g *SnowflakeGenerator) Generate() (string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	now := time.Now().UnixNano() / 1e6
-
-	if now == g.lastTime {
-		g.sequence = (g.sequence + 1) & 0xFFF
-		if g.sequence == 0 {
-			for now <= g.lastTime {
-				now = time.Now().UnixNano() / 1e6
-			}
+		// Use crypto/rand for better randomness
+		randomIndex, err := rand.Int(rand.Reader, charsetLength)
+		if err != nil {
+			return "", err
 		}
-	} else {
-		g.sequence = 0
+
+		result.WriteByte(g.charset[randomIndex.Int64()])
 	}
 
-	g.lastTime = now
-
-	id := ((now - g.epoch) << 22) |
-		(g.machineID << 12) |
-		g.sequence
-
-	// Convert to base64-like string
-	encoded := base64.RawURLEncoding.EncodeToString(
-		[]byte(fmt.Sprintf("%d", id)))
-
-	if len(encoded) > DefaultLength {
-		encoded = encoded[:DefaultLength]
-	}
-
-	return encoded, nil
+	return result.String(), nil
 }
 
-func (g *SnowflakeGenerator) GenerateWithLength(length int) (string, error) {
-	code, err := g.Generate()
-	if err != nil {
+// Alternative: UUID-based generator for even better uniqueness
+type UUIDGenerator struct {
+	length int
+}
+
+func NewUUIDGenerator(length int) *UUIDGenerator {
+	if length < 6 {
+		length = 6
+	}
+	if length > 12 {
+		length = 12
+	}
+
+	return &UUIDGenerator{length: length}
+}
+
+func (g *UUIDGenerator) Generate() (string, error) {
+	return g.GenerateWithLength(g.length)
+}
+
+func (g *UUIDGenerator) GenerateWithLength(length int) (string, error) {
+	// Generate random bytes
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
 
-	if len(code) > length {
-		return code[:length], nil
+	// Convert to base62
+	charset := DefaultCharset
+	var result strings.Builder
+	result.Grow(length)
+
+	for _, b := range bytes {
+		result.WriteByte(charset[int(b)%len(charset)])
 	}
 
-	return code, nil
+	return result.String(), nil
+}
+
+// Timestamp-based generator for chronological ordering (optional)
+type TimestampGenerator struct {
+	length int
+	base62 *Base62Generator
+}
+
+func NewTimestampGenerator(length int) *TimestampGenerator {
+	return &TimestampGenerator{
+		length: length,
+		base62: NewBase62GeneratorWithLength(length),
+	}
+}
+
+func (g *TimestampGenerator) Generate() (string, error) {
+	return g.GenerateWithLength(g.length)
+}
+
+func (g *TimestampGenerator) GenerateWithLength(length int) (string, error) {
+	// For now, just use the base62 generator
+	// You could implement timestamp encoding here if needed
+	return g.base62.GenerateWithLength(length)
 }

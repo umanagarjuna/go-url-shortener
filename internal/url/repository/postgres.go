@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -44,9 +45,63 @@ func (r *PostgresRepository) Create(ctx context.Context, url *domain.URL) error 
 	return nil
 }
 
-func (r *PostgresRepository) GetByShortCode(ctx context.Context,
-	shortCode string) (*domain.URL, error) {
+// FIXED: Add the missing GetByOriginalURLAndUser method
+func (r *PostgresRepository) GetByOriginalURLAndUser(ctx context.Context, originalURL string, userID int64) (*domain.URL, error) {
+	var url domain.URL
 
+	query := `
+		SELECT id, short_code, original_url, user_id, created_at, 
+			   expires_at, click_count, is_active, metadata
+		FROM urls
+		WHERE original_url = $1 AND user_id = $2 AND is_active = true
+		ORDER BY created_at DESC
+		LIMIT 1`
+
+	err := r.db.GetContext(ctx, &url, query, originalURL, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // URL not found for this user
+		}
+		return nil, fmt.Errorf("failed to get URL by original URL and user: %w", err)
+	}
+
+	// Check if URL has expired - if expired, return nil (create new one)
+	if url.ExpiresAt != nil && url.ExpiresAt.Before(time.Now()) {
+		return nil, nil // Expired, should create new record
+	}
+
+	return &url, nil
+}
+
+// FIXED: Remove the old GetByOriginalURL method or keep it if you need it for other purposes
+func (r *PostgresRepository) GetByOriginalURL(ctx context.Context, originalURL string) (*domain.URL, error) {
+	var url domain.URL
+
+	query := `
+		SELECT id, short_code, original_url, user_id, created_at, 
+			   expires_at, click_count, is_active, metadata
+		FROM urls
+		WHERE original_url = $1 AND is_active = true
+		ORDER BY created_at DESC
+		LIMIT 1`
+
+	err := r.db.GetContext(ctx, &url, query, originalURL)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // URL not found
+		}
+		return nil, fmt.Errorf("failed to get URL by original URL: %w", err)
+	}
+
+	// Check if URL has expired
+	if url.ExpiresAt != nil && url.ExpiresAt.Before(time.Now()) {
+		return nil, nil // URL expired, treat as not found
+	}
+
+	return &url, nil
+}
+
+func (r *PostgresRepository) GetByShortCode(ctx context.Context, shortCode string) (*domain.URL, error) {
 	var url domain.URL
 	query := `
         SELECT id, short_code, original_url, user_id, created_at, 
@@ -70,38 +125,77 @@ func (r *PostgresRepository) GetByShortCode(ctx context.Context,
 	return &url, nil
 }
 
-func (r *PostgresRepository) IncrementClickCount(ctx context.Context,
-	shortCode string) error {
-
+func (r *PostgresRepository) IncrementClickCount(ctx context.Context, shortCode string) error {
 	query := `
-        UPDATE urls 
-        SET click_count = click_count + 1 
-        WHERE short_code = $1`
+		UPDATE urls 
+		SET click_count = click_count + 1 
+		WHERE short_code = $1 AND is_active = true`
 
-	_, err := r.db.ExecContext(ctx, query, shortCode)
+	result, err := r.db.ExecContext(ctx, query, shortCode)
 	if err != nil {
 		return fmt.Errorf("failed to increment click count: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("URL with short code %s not found or not active", shortCode)
 	}
 
 	return nil
 }
 
-func (r *PostgresRepository) Delete(ctx context.Context, shortCode string,
-	userID *int64) error {
+func (r *PostgresRepository) Update(ctx context.Context, url *domain.URL) error {
+	query := `
+		UPDATE urls 
+		SET user_id = $1, 
+			expires_at = $2, 
+			metadata = $3,
+			updated_at = NOW()
+		WHERE short_code = $4 AND is_active = true`
 
+	var metadataJSON []byte
+	if url.Metadata != nil && len(url.Metadata) > 0 {
+		var err error
+		metadataJSON, err = json.Marshal(url.Metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+	}
+
+	result, err := r.db.ExecContext(ctx, query,
+		url.UserID,
+		url.ExpiresAt,
+		metadataJSON,
+		url.ShortCode)
+
+	if err != nil {
+		return fmt.Errorf("failed to update URL: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("URL with short code %s not found or not active", url.ShortCode)
+	}
+
+	return nil
+}
+
+// FIXED: Update Delete method signature to match interface
+func (r *PostgresRepository) Delete(ctx context.Context, shortCode string) error {
 	query := `
         UPDATE urls 
         SET is_active = false 
         WHERE short_code = $1`
 
-	args := []interface{}{shortCode}
-
-	if userID != nil {
-		query += " AND user_id = $2"
-		args = append(args, *userID)
-	}
-
-	result, err := r.db.ExecContext(ctx, query, args...)
+	result, err := r.db.ExecContext(ctx, query, shortCode)
 	if err != nil {
 		return fmt.Errorf("failed to delete URL: %w", err)
 	}
@@ -112,15 +206,14 @@ func (r *PostgresRepository) Delete(ctx context.Context, shortCode string,
 	}
 
 	if rows == 0 {
-		return fmt.Errorf("URL not found or unauthorized")
+		return fmt.Errorf("URL not found")
 	}
 
 	return nil
 }
 
-func (r *PostgresRepository) GetByUserID(ctx context.Context, userID int64,
-	limit, offset int) ([]*domain.URL, error) {
-
+// FIXED: Rename method to match interface
+func (r *PostgresRepository) GetUserURLs(ctx context.Context, userID int64, limit, offset int) ([]*domain.URL, error) {
 	var urls []*domain.URL
 	query := `
         SELECT id, short_code, original_url, user_id, created_at, 
@@ -137,26 +230,3 @@ func (r *PostgresRepository) GetByUserID(ctx context.Context, userID int64,
 
 	return urls, nil
 }
-
-// Migration SQL
-const CreateTableSQL = `
-CREATE TABLE IF NOT EXISTS urls (
-    id BIGSERIAL PRIMARY KEY,
-    short_code VARCHAR(10) UNIQUE NOT NULL,
-    original_url TEXT NOT NULL,
-    user_id BIGINT,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMP,
-    click_count BIGINT NOT NULL DEFAULT 0,
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    metadata JSONB,
-    
-    INDEX idx_short_code (short_code),
-    INDEX idx_user_id (user_id),
-    INDEX idx_created_at (created_at)
-);
-
--- Partitioning by creation date for better performance
-CREATE TABLE urls_2025_01 PARTITION OF urls
-FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
-`

@@ -61,7 +61,7 @@ func main() {
 	// Initialize dependencies
 	repo := repository.NewPostgresRepository(db)
 	cacheLayer := cache.NewRedisCache(redisClient)
-	generator := shortcode.NewSnowflakeGenerator(cfg.Service.MachineID)
+	generator := shortcode.NewBase62GeneratorWithLength(10)
 	urlValidator := validator.NewDefaultValidator()
 
 	// Initialize service

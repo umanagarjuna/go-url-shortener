@@ -25,14 +25,30 @@ func NewGRPCHandler(service *service.URLService) *GRPCHandler {
 func (h *GRPCHandler) CreateURL(ctx context.Context,
 	req *pb.CreateURLRequest) (*pb.URLResponse, error) {
 
+	// FIXED: Handle type conversions properly
 	domainReq := &domain.CreateURLRequest{
-		URL:      req.Url,
-		UserID:   req.UserId,
-		Metadata: req.Metadata,
+		URL: req.Url,
 	}
 
-	if *req.ExpiresIn > 0 {
-		domainReq.ExpiresIn = req.ExpiresIn
+	// FIXED: Convert *int64 to int64 (with nil check)
+	if req.UserId != nil {
+		domainReq.UserID = *req.UserId
+	} else {
+		return nil, status.Errorf(codes.InvalidArgument, "user_id is required")
+	}
+
+	// FIXED: Convert map[string]string to map[string]interface{}
+	if req.Metadata != nil {
+		domainReq.Metadata = make(map[string]interface{})
+		for key, value := range req.Metadata {
+			domainReq.Metadata[key] = value
+		}
+	}
+
+	// FIXED: Convert *int64 to *int
+	if req.ExpiresIn != nil && *req.ExpiresIn > 0 {
+		expiresInInt := int(*req.ExpiresIn)
+		domainReq.ExpiresIn = &expiresInInt
 	}
 
 	resp, err := h.service.CreateURL(ctx, domainReq)
@@ -41,13 +57,21 @@ func (h *GRPCHandler) CreateURL(ctx context.Context,
 			"failed to create URL: %v", err)
 	}
 
-	return &pb.URLResponse{
+	pbResp := &pb.URLResponse{
 		ShortCode:   resp.ShortCode,
 		ShortUrl:    resp.ShortURL,
 		OriginalUrl: resp.OriginalURL,
 		CreatedAt:   resp.CreatedAt.Unix(),
 		ClickCount:  resp.ClickCount,
-	}, nil
+	}
+
+	// Handle ExpiresAt conversion
+	if resp.ExpiresAt != nil {
+		expiresAtUnix := resp.ExpiresAt.Unix()
+		pbResp.ExpiresAt = &expiresAtUnix
+	}
+
+	return pbResp, nil
 }
 
 func (h *GRPCHandler) GetURL(ctx context.Context,
@@ -72,8 +96,8 @@ func (h *GRPCHandler) GetURL(ctx context.Context,
 	}
 
 	if resp.ExpiresAt != nil {
-		unixTimestamp := resp.ExpiresAt.Unix() // Get the int64 value
-		pbResp.ExpiresAt = &unixTimestamp      // Assign the address of the int64 value
+		unixTimestamp := resp.ExpiresAt.Unix()
+		pbResp.ExpiresAt = &unixTimestamp
 	}
 
 	return pbResp, nil
